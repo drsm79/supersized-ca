@@ -1,0 +1,175 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+
+	<!--
+		Supersized - Fullscreen Slideshow jQuery Plugin
+		Version : 3.2.7
+		Site	: www.buildinternet.com/project/supersized
+		
+		Author	: Sam Dunn
+		Company : One Mighty Roar (www.onemightyroar.com)
+		License : MIT License / GPL License
+	-->
+
+	<head>
+
+		<title>Supersized - Full Screen Background Slideshow jQuery Plugin</title>
+		<meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+		
+		<link rel="stylesheet" href="css/supersized.css" type="text/css" media="screen" />
+		<link rel="stylesheet" href="theme/supersized.shutter.css" type="text/css" media="screen" />
+
+	</head>
+	
+	<style type="text/css">
+		ul#demo-block{ margin:0px; }
+			ul#demo-block li{ padding:5px; display:inline; float:left; clear:both; color:#aaa; background:url('img/bg-black.png'); list-style-type: none; font:11px Helvetica, Arial, sans-serif; }
+			ul#demo-block li a{ color:#eee; font-weight:bold; }
+			ul#demo-block li.info{display: none;}
+	</style>
+
+<body>
+
+	<!--Demo styles (you can delete this block)-->
+	
+	<ul id="demo-block">
+		<li><a href="#" id="showinfo">About</a></li>
+		<li class="info"><a href="http://buildinternet.com/project/supersized/" target="_blank"><img src="img/supersized-logo.png"/></a></li>
+		<li class="info">Photographers: <a href="http://cargocollective.com/mariakazvan" target="_blank">Maria Kazvan</a>, <a href="http://colindub.com" target="_blank">Colin Wojno</a>, &amp; <a href="http://brookeshaden.com/" target="_blank">Brooke Shaden</a></li>
+	</ul>
+	
+	<!--End of styles-->
+
+	<!--Thumbnail Navigation-->
+	<div id="prevthumb"></div>
+	<div id="nextthumb"></div>
+	
+	<!--Arrow Navigation-->
+	<a id="prevslide" class="load-item"></a>
+	<a id="nextslide" class="load-item"></a>
+	
+	<div id="thumb-tray" class="load-item">
+		<div id="thumb-back"></div>
+		<div id="thumb-forward"></div>
+	</div>
+	
+	<!--Time Bar-->
+	<div id="progress-back" class="load-item">
+		<div id="progress-bar"></div>
+	</div>
+	
+	<!--Control Bar-->
+	<div id="controls-wrapper" class="load-item">
+		<div id="controls">
+			
+			<a id="play-button"><img id="pauseplay" src="img/pause.png"/></a>
+		
+			<!--Slide counter-->
+			<div id="slidecounter">
+				<span class="slidenumber"></span> / <span class="totalslides"></span>
+			</div>
+			
+			<!--Slide captions displayed here-->
+			<div id="slidecaption"></div>
+			
+			<!--Thumb Tray button-->
+			<a id="tray-button"><img id="tray-arrow" src="img/button-tray-up.png"/></a>
+			
+			<!--Navigation-->
+			<ul id="slide-list"></ul>
+			
+		</div>
+	</div>
+
+		<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js"></script>
+		<script type="text/javascript" src="js/jquery.easing.min.js"></script>
+		
+		<script type="text/javascript" src="js/supersized.3.2.7.min.js"></script>
+		<script type="text/javascript" src="theme/supersized.shutter.min.js"></script>
+		
+		<!-- jquery-1.7.1.min.js	-->
+		<script type="text/javascript" src="js/jquery.couch.js"></script>
+		<script type="text/javascript" src="js/underscore-min.js"></script>
+		<script type="text/javascript" src="js/backbone-min.js"></script>
+		<script type="text/javascript" src="js/backbone.couch.js"></script>
+		<!-- <script type="text/javascript" src="js/app.js"></script> -->
+		
+		<script type="text/javascript">
+			
+			jQuery(function($){
+				// TODO: pick up from URL
+				Backbone.couch.databaseName = "supersized";
+        Backbone.couch.ddocName  = "supersized";
+        Backbone.couch.enableChangesFeed = false;
+
+        var Doc = Backbone.Model.extend({
+					initialize: function(doc) {
+					  this.set(doc.value);
+					}
+				});
+
+        var PhotoCollection = Backbone.Collection.extend({
+				  model: Doc,
+				  url: "photo",
+				  doreduce: false,
+				  error : function(jqXHR, textStatus, errorThrown){
+				    Backbone.couch.log(["jqXHR", jqXHR]);
+				    Backbone.couch.log(["textStatus", textStatus]);
+				    Backbone.couch.log(["errorThrown", errorThrown]);
+				    return null
+				  },
+				  success : function(result){
+				    var models = [];
+				    _.each( result.rows, function( row ) {
+				      if(row){
+				        models.push( row );
+				      }
+				    });
+				    if ( models.length == 0 ) { models = null }
+				    return models;
+				  }
+				});
+
+        // TODO: read this in from a document
+        settings = {
+        	// Functionality
+					slide_interval          :   3000,		// Length between transitions
+					transition              :   3, 			// 0-None, 1-Fade, 2-Slide Top, 3-Slide Right, 4-Slide Bottom, 5-Slide Left, 6-Carousel Right, 7-Carousel Left
+					transition_speed		:	700,		// Speed of transition
+															   
+					// Components							
+					slide_links				:	'blank',	// Individual links for each slide (Options: false, 'num', 'name', 'blank')
+					slides 					:  	[]
+        }
+        
+				var Slideshow = Backbone.View.extend({
+				  initialize: function(settings) {
+				    _.bindAll(this);
+				    _.extend(this, Backbone.Events);
+
+				    this.collection.bind('change', this.render);
+				    this.collection.bind('add', this.render);
+				    this.collection.bind('remove', this.render);
+				    this.collection.bind('reset', this.render);
+				    this.collection.fetch();
+				  },
+				  render: function() {
+				    settings.slides = this.collection.map(function(d){
+				    	return d.toJSON();
+				    });
+						$.supersized(settings);
+				  }
+				});
+
+				var show = new Slideshow({collection: new PhotoCollection()});
+  				
+		  });
+
+
+      $('#showinfo').click(function() {
+      	$('.info').toggle();
+      });
+		</script>
+</body>
+</html>

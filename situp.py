@@ -29,7 +29,21 @@ try:
 except:
     pass
 
-__version__ = "0.1.2"
+CAN_PREPROC = False
+try:
+    import preproc
+    CAN_PREPROC = True
+except:
+    pass
+
+CAN_POSTPROC = False
+try:
+    import postproc
+    CAN_POSTPROC = True
+except:
+    pass
+
+__version__ = "0.2.1"
 
 
 class CommandDispatch:
@@ -200,7 +214,7 @@ class AddServer(Command):
                 help="The simple name server to add [required]")
 
     def _process_args(self, args=None, options=None):
-        options, args = Command._process_args(self)
+        options, args = Command.process_args(self, args, options)
         msg = 'Username for server, press enter for no user/password auth:'
         username = raw_input(msg)
         if username:
@@ -250,12 +264,56 @@ class Push(Command):
         group.add_option('-e', '--database', dest='database',
                 help="Push the app to named database")
 
+        if CAN_PREPROC:
+            proc_l = lambda x: not x.startswith('_')
+            pre_help = "Run named preprocessors, available preprocessors"
+            pre_help += " %s " % ', '.join(filter(proc_l, dir(preproc)))
+            pre_help += "(multiple allowed)"
+
+            group.add_option("--pre",
+                    dest="preproc", default=[], action='append',
+                    help=pre_help)
+
+        if CAN_POSTPROC:
+            post_help = "Run named postprocessors, available postprocessors"
+            post_help +=" %s " % ', '.join(filter(proc_l, dir(postproc)))
+            post_help += "(multiple allowed)"
+
+            group.add_option("--post",
+                    dest="postproc", default=[], action='append',
+                    help=post_help)
+
         if CAN_MINIFY_JS:
             group.add_option("-m", "--minify",
                 dest="minify", default=False, action="store_true",
                 help="Minify javascript before pushing to database")
 
         self.parser.add_option_group(group)
+
+    def __call__(self):
+        """
+        Set up the logger, work out if I should print help or call the command.
+        """
+        (options, args) = self._process_args()
+
+        self._configure_logger(options)
+
+        self.logger.debug('called')
+        self.logger.debug(args)
+        self.logger.debug(options)
+
+        if CAN_PREPROC:
+            for pre in options.preproc:
+                self.logger.debug('running %s' % pre)
+                getattr(preproc, pre)(args, options, self.logger)
+
+        self.run_command(args, options)
+
+        if CAN_POSTPROC:
+            for post in options.postproc:
+                self.logger.debug('running %s' % post)
+                getattr(postproc, post)(args, options, self.logger)
+
 
     def _push_docs(self, docs_list, db, servers):
         """
@@ -390,7 +448,7 @@ class Push(Command):
                         attachments.update(attach)
                     else:
                         if len(path) > 0 and path[0] in ['views', 'lists',
-                                'shows', 'filters']:
+                                'shows', 'filters', 'indexes']:
                             f = open(afile_path)
                             d[afile.strip('.js')] = f.read().strip()
                             f.close()
@@ -524,21 +582,27 @@ class Fetch(Command):
 
     def _add_options(self):
         group = OptionGroup(self.parser, "Fetch options", "")
-
+        group.add_option("-g", "--getdocs",
+                dest="getdocs", action="store_true", default=False,
+                help="Fetch documents as well as the design docs - potentially large response")
+        self.parser.add_option_group(group)
     def run_command(self, args, options):
         """
         """
-        url = args[0]
-        d = json.load(urllib.urlopen('%s/_all_docs?include_docs=true' % url))
+        url = '%s/_all_docs?include_docs=true' % args[0]
+        if not options.getdocs:
+            url = '%s&startkey="_design%%2F"&endkey="_design0"' % url
+        d = json.load(urllib.urlopen(url))
         app = [d['doc'] for d in d['rows']]
 
-        if not os.path.exists('_docs'):
-            os.mkdir('_docs')
-        if not os.path.exists('_design'):
-            os.mkdir('_design')
+        if not os.path.exists(options.root):
+            os.mkdir(options.root)
+        if options.getdocs and not os.path.exists('%s/_docs' % options.root):
+            os.mkdir('%s/_docs' % options.root)
+        if not os.path.exists('%s/_design' % options.root):
+            os.mkdir('%s/_design' % options.root)
         for doc in app:
             # TODO: have _rev removal be optional
-            # TODO: optionally filter out data or design docs
             # TODO: correct on disk layout of vendors
             # FIXME: ignores design docs without _attachments
             del doc['_rev']
@@ -547,16 +611,16 @@ class Fetch(Command):
             if attachments:
                 del doc['_attachments']
             if id.startswith('_design'):
-                path_elems = id.split('/')
+                path_elems = os.path.join(options.root, id).split('/')
                 path_elems.append('_attachments')
                 base_att_dir = os.path.join(*path_elems)
                 # This could (and should) be loads nicer
-                views = os.path.join(id, 'views')
-                if not os.path.exists(id):
-                    os.mkdir(id)
+                views = os.path.join(options.root, id, 'views')
+                if not os.path.exists(os.path.join(options.root, id)):
+                    os.mkdir(os.path.join(options.root, id))
                 if 'views' in doc.keys() and not os.path.exists(views):
-                    os.mkdir(os.path.join(id, 'views'))
-                for view,content in doc['views'].items():
+                    os.mkdir(views)
+                for view, content in doc['views'].items():
                     p = os.path.join(views, view)
                     if not os.path.exists(p):
                         os.mkdir(p)
@@ -566,10 +630,10 @@ class Fetch(Command):
                         f.close()
 
             else:
-                f = open(os.path.join('_docs', '%s.json' % id), 'w')
+                f = open(os.path.join('%s/_docs' % options.root, '%s.json' % id), 'w')
                 json.dump(doc, f)
                 f.close()
-                base_att_dir = os.path.join('_docs', id)
+                base_att_dir = os.path.join('%s/_docs' % options.root, id)
             for att in attachments.keys():
                 att_dir = os.path.join(base_att_dir, *att.split('/')[:-1])
                 if not os.path.exists(att_dir):
